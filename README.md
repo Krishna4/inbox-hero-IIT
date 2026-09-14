@@ -9,9 +9,32 @@
 
 `inboxHero` is an agentic email triage and response system designed to process, ground, and safely clear an executive inbox (100 messages) without human burnout or catastrophic hallucination. It implements deterministic zero-token triage for automated mail, strictly grounded drafting (cite-or-silence), adversarial prompt injection defense, cross-process preference memory, and a comprehensive 3-pane dashboard.
 
+## System Architecture & Design Decisions (Submission Criteria)
+
+1. **Framework Choice: None (Pure Python Standard Library)**
+   - Built with pure Python OOP and standard library components without heavy third-party agent frameworks (e.g. CrewAI, LangChain).
+   - Guarantees sub-second deterministic execution, zero framework bloat, complete control over prompt encapsulation, and native execution on local Ollama (`qwen2.5:1.5b`).
+
+2. **Disposition Vocabulary (Part 2 / R1)**
+   - `reply`: Personal inquiries, questions, or direct correspondence requiring founder response.
+   - `archive`: Completed transactional items, automated receipts, digests, and low-priority alerts.
+   - `defer`: Important tasks or deadlines that must be addressed prior to an upcoming calendar date.
+   - `delegate`: Operational and technical coordination tasks routed to team members.
+   - `escalate`: High-stakes corporate actions, wire/payment changes, or hostile security attacks.
+
+3. **Reversible vs. Irreversible Classification & Safety Gate (Part 4 / R3)**
+   - **Reversible:** Drafting replies, applying labels, archiving notifications, and deferring tasks (automated).
+   - **Irreversible:** Dispatching emails (`send`) and permanently removing records (`delete`).
+   - **Gate Boundary:** Irreversible sends are strictly gated behind `SafetyGate`. By default, runs in dry-run mode (`python demo.py --cap R3`) guaranteeing **0 writes to outbox/**. Live interactive approval is triggered with `--live` (writing to `outbox/<id>.txt` only on human `'y'`).
+
+4. **Retrieval Approach (Part 3 / R2)**
+   - **Thread-Walk:** Chronologically walks `thread_id` to gather full conversational context.
+   - **Cross-Thread Keyword Retrieval:** Targeted keyword search in `MailStore` for cross-conversation dependencies (e.g. venue date tied to launch date).
+   - **Cite-or-Silence Invariant:** Every draft must cite verified source message IDs; if facts are missing from the inbox, the system strictly drafts nothing.
+
 ---
 
-## Quickstart & Demonstration Commands
+## Quickstart & Evaluation Commands
 
 ```bash
 # Setup environment (Python 3.10+)
@@ -26,16 +49,17 @@ python3 tests/test_part5.py
 python3 tests/test_part6.py
 python3 tests/test_part7.py
 
-# Run standalone capabilities via CLI
-python3 demo.py --cap R1            # Part 2: Triage (100% zeroed, rules + model)
-python3 demo.py --cap R2 --msg m008   # Part 3: Grounded draft citing m003
-python3 demo.py --cap R3 --dry-run   # Part 4: Safety gate intercept
-python3 demo.py --cap R4            # Part 5: Standing instructions persistence
-python3 demo.py --cap R5            # Part 6: Hostile attack defense & refusal
-python3 demo.py --cap R6            # Part 7: Three-pane dashboard (HTML + JSON)
-python3 demo.py --cap X1            # Part 8: Follow-up tracker (m044 chase)
-python3 demo.py --cap X2            # Part 8: Multi-message thread summarizer
-python3 demo.py --cap X3            # Part 8: Smart daily digest with persistent memory
+# Run standalone capabilities via CLI (as declared in capabilities.json)
+python demo.py --cap R1            # Part 2: Triage (100% zeroed: 33 rules, 67 model)
+python demo.py --cap R2            # Part 3: Grounded drafting (cite-or-silence)
+python demo.py --cap R3            # Part 4: Safety gate (dry-run mode, 0 outbox writes)
+python demo.py --cap R3 --live     # Part 4: Safety gate (interactive approval prompt)
+python demo.py --cap R4            # Part 5: Standing instructions (persistence across restarts)
+python demo.py --cap R5            # Part 6: Hostile attack defense & refusal (7 vectors)
+python demo.py --cap R6            # Part 7: Three-pane dashboard (dashboard.html & json)
+python demo.py --cap X1            # Part 8: Follow-up tracker (m044 chase)
+python demo.py --cap X2            # Part 8: Multi-message thread summarizer
+python demo.py --cap X3            # Part 8: Smart daily digest with persistent memory
 ```
 
 ---

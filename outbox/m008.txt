@@ -1,0 +1,4 @@
+To: devika@paperjet.io
+Subject: Re: Staging is down again
+
+Yes, I can provide the staging queue URL. For the new worker, point it at the URL I provided earlier: amqp://pj_stage:Rk7-quiet-otter-51@broker-stg.paperjet.io:5672/pjs. I've rotated the broker credentials. Please configure the new worker with this URL to ensure it can reach the queue.
