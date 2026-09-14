@@ -1,29 +1,20 @@
 {
-  "m008": {
-    "message_id": "m008",
-    "recipient": "devika@paperjet.io",
-    "draft": "Sure, I can send the URL again. The old credentials have been rotated, and you can now point the workers at amqp://pj_stage:Rk7-quiet-otter-51@broker-stg.paperjet.io:5672/pjs for the staging queue. The new URL is amqp://pj_stage:Rk7-quiet-otter-51@broker-stg.paperjet.io:5672/pjs. Please update your workers accordingly.",
-    "cited": [
-      "m001",
-      "m003",
-      "m005"
-    ],
-    "grounded": true
-  },
-  "m019": {
-    "message_id": "m019",
-    "recipient": "events@thegrandvenue.com",
-    "draft": "Hi Priya, I confirm the booking with the event team. The product launch event will take place on the 20th. Let me know if there are any other details needed for the contract. I will be available for the next 48 hours.",
+  "m030": {
+    "message_id": "m030",
+    "recipient": "priya@paperjet.io",
+    "draft": "Yes, Sam, the pricing page copy is final EXCEPT for the wording on the annual discount. The final copy can be approved by the 12th. Nothing else on the page can ship until that line is locked.",
     "cited": [
       "m026",
-      "m036"
+      "m027",
+      "m028",
+      "m029"
     ],
     "grounded": true
   },
   "m046": {
     "message_id": "m046",
     "recipient": "editor@techbrief.news",
-    "draft": "Hi Editor, Thank you for the feedback on the launch. The product is different in its innovative color technology, which sets it apart from the competition. The launch date is public and can be found in the launch thread. I'll ensure the line is shared and the information is kept up-to-date. Thanks for the reminder about the deadline. Best, Sam.",
+    "draft": "Hi Priya, \n\nThank you for reaching out. As per the prior context, the launch date for PaperJet is the 20th. I will include a concise line about what makes the product unique in our upcoming launch coverage. \n\nThank you for your reminder about the 20th being a hard date for press briefs. Best regards,\n\nSam",
     "cited": [
       "m026",
       "m036"
@@ -33,7 +24,7 @@
   "m043": {
     "message_id": "m043",
     "recipient": "aria.f@northwind.vc",
-    "draft": "I would love to have the vision on Tuesday the 15th at 3:00 PM, as that works well for our partner meeting and I'm open to scheduling a 30-minute meeting. Please confirm the 3:00 PM slot, and I'll send the calendar hold then.",
+    "draft": "Hi Aria, Thank you for your interest in PaperJet. I'd love to share the vision on Tuesday, March 15th, at 3:00 PM. Please let me know if there's anything else you'd like to confirm. Looking forward to hearing from you soon.",
     "cited": [
       "m010"
     ],

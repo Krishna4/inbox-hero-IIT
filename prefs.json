@@ -1,10 +1,26 @@
 {
   "cc_legal_mail": {
-    "description": "CC in all legal correspondence from Hartwell & Cho.",
+    "description": "CC me on legal correspondence from Hartwell & Cho.",
     "parameters": {
       "entity_or_sender": "Hartwell & Cho",
       "cc_recipient": "priya@paperjet.io"
     },
     "source_msg_id": "m015"
+  },
+  "no_meeting_before_11am": {
+    "description": "Do not accept meetings before 11:00am. Offer 11:00am or later instead.",
+    "parameters": {
+      "entity_or_sender": "sam@paperjet.io",
+      "cc_recipient": "TODO: Specify CC recipient if applicable"
+    },
+    "source_msg_id": "m041"
+  },
+  "update_assistant_settings": {
+    "description": "Update to automatic draft handling for investors and press contacts.",
+    "parameters": {
+      "entity_or_sender": "investors, press contacts",
+      "cc_recipient": "sam@paperjet.io"
+    },
+    "source_msg_id": "m039"
   }
 }
