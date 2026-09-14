@@ -1,6 +1,6 @@
 {
   "cc_legal_mail": {
-    "description": "CC Priya on all legal correspondence from Hartwell & Cho to ensure she doesn't miss any deadlines.",
+    "description": "CC Priya on all legal correspondence from Hartwell & Cho.",
     "parameters": {
       "entity_or_sender": "Hartwell & Cho",
       "cc_recipient": "priya@paperjet.io"

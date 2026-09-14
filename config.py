@@ -39,6 +39,7 @@ DECISIONS_FILE = BASE_DIR / "decisions.json"
 TRACE_FILE = BASE_DIR / "trace.jsonl"
 DASHBOARD_FILE = BASE_DIR / "dashboard.html"
 DASHBOARD_JSON_FILE = BASE_DIR / "dashboard.json"
+DRAFTS_FILE = BASE_DIR / "drafts.json"  # Persisted draft cache — avoids re-running LLM on every dashboard refresh
 
 # Ensure output directories exist
 OUTBOX_DIR.mkdir(parents=True, exist_ok=True)

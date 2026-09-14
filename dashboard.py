@@ -28,7 +28,8 @@ from config import (
     PREFS_FILE,
     TRACE_FILE,
     DASHBOARD_FILE,
-    DASHBOARD_JSON_FILE
+    DASHBOARD_JSON_FILE,
+    DRAFTS_FILE
 )
 from schemas import Message, Commitment, TraceEvent
 from store import MailStore
@@ -54,12 +55,16 @@ class DashboardGenerator:
         self.scanner = SecurityScanner()
         self.memory = PreferenceStore(self.prefs_file)
         self.drafter = GroundedDrafter(self.store)
+        self._last_data: Optional[Dict[str, Any]] = None
 
     def get_pane1_pending_actions(self) -> List[Dict[str, Any]]:
         """
         Pane 1: Pending Actions needing human sign-off.
-        Gathers reply drafts that require human gate authorization.
-        Completely generic across any input dataset.
+        Surfaces only genuine human-to-human messages that need a reply.
+        Filters out:
+          - Automated senders (no-reply, noreply, alerts, ship-confirm, etc.)
+          - Messages sent by the owner themselves (cannot reply to yourself)
+          - Hostile messages (already in Pane 2)
         """
         pending_actions = []
 
@@ -73,19 +78,75 @@ class DashboardGenerator:
             except Exception:
                 decisions_map = {}
 
-        candidate_ids = []
+        # Automated sender prefixes — generic pattern, not a hardcoded allowlist.
+        # Covers no-reply addresses, department aliases, automated system accounts.
+        AUTO_PREFIXES = (
+            "no-reply", "noreply", "do-not-reply", "donotreply",
+            "ship-confirm", "ship-notification", "order-confirm",
+            "calendar-notification", "alerts", "alert",
+            "info", "feedback", "status", "notes",
+            "checkin", "appointments", "success", "mailer",
+            "notifications", "billing", "no-reply-aws",
+            "hr", "facilities", "it-support", "helpdesk",
+            "noreply-aws", "support", "admin",
+        )
+
+        def _is_automated(addr: str) -> bool:
+            """Returns True if the sender is an automated/no-reply address."""
+            local = addr.split("@")[0].lower()
+            return any(local.startswith(p.rstrip("@")) or local == p.rstrip("@")
+                       for p in AUTO_PREFIXES)
+
+        # Infer owner address generically: the most common 'to' address in the inbox
+        # is the inbox owner (Sam). Messages FROM the owner shouldn't be pending actions.
+        from collections import Counter
+        to_counter = Counter(m.to_addr.lower() for m in self.store.messages if m.to_addr)
+        owner_addr = to_counter.most_common(1)[0][0] if to_counter else ""
+
+        def _is_owner_sent(msg: Message) -> bool:
+            """Returns True if the message was sent BY the owner, not received by them."""
+            return msg.from_addr.lower() == owner_addr
+
+
+        candidate_ids_raw = []
         if decisions_map:
             for mid, d in decisions_map.items():
                 if d.get("disposition") == "reply":
-                    candidate_ids.append(mid)
+                    candidate_ids_raw.append(mid)
         else:
-            # Dynamically identify messages that require replies
+            # Fallback: heuristic scan when no decisions.json exists
             for msg in self.store.messages:
+                if _is_automated(msg.from_addr):
+                    continue
                 text = (msg.subject + " " + msg.body).lower()
                 if any(q in text for q in ["?", "could you", "does that work", "let me know", "can we"]):
                     sec = self.scanner.scan_message(msg)
                     if not sec.is_hostile:
-                        candidate_ids.append(msg.id)
+                        candidate_ids_raw.append(msg.id)
+
+        # Include any messages that have precomputed grounded drafts in DRAFTS_FILE
+        if DRAFTS_FILE.exists():
+            try:
+                with open(DRAFTS_FILE, "r", encoding="utf-8") as f:
+                    saved_drafts = json.load(f)
+                for mid in saved_drafts:
+                    if mid not in candidate_ids_raw:
+                        candidate_ids_raw.append(mid)
+            except Exception:
+                pass
+
+        # Deduplicate by thread: for threads with multiple 'reply' candidates,
+        # only surface the most recent message. Showing every message in a long
+        # thread creates noise; the latest unresolved message represents the thread.
+        thread_latest: Dict[str, Tuple[str, str]] = {}  # thread_id -> (msg_id, timestamp)
+        for mid in candidate_ids_raw:
+            msg = self.store.get_message(mid, log_read=False)
+            if not msg:
+                continue
+            tid = msg.thread_id
+            if tid not in thread_latest or msg.timestamp > thread_latest[tid][1]:
+                thread_latest[tid] = (mid, msg.timestamp)
+        candidate_ids = [v[0] for v in thread_latest.values()]
 
         # Process each pending candidate
         for mid in candidate_ids:
@@ -93,6 +154,15 @@ class DashboardGenerator:
             if not msg:
                 continue
 
+            # Filter 1: Skip automated/no-reply senders
+            if _is_automated(msg.from_addr):
+                continue
+
+            # Filter 2: Skip messages the owner sent to themselves
+            if _is_owner_sent(msg):
+                continue
+
+            # Filter 3: Skip hostile messages (they belong in Pane 2)
             sec = self.scanner.scan_message(msg)
             if sec.is_hostile:
                 continue
@@ -103,18 +173,37 @@ class DashboardGenerator:
             cc_list = []
 
             if not draft_text:
-                draft_res = self.drafter.draft_reply(mid, cap="R6")
-                if draft_res:
+                # Check pre-computed drafts from R2 run (or previous invocation)
+                saved_drafts = {}
+                if DRAFTS_FILE.exists():
+                    try:
+                        with open(DRAFTS_FILE, "r", encoding="utf-8") as f:
+                            saved_drafts = json.load(f)
+                    except Exception:
+                        saved_drafts = {}
+
+                if mid in saved_drafts:
+                    draft_res = saved_drafts[mid]
+                else:
+                    draft_res = self.drafter.draft_reply(mid, cap="R6")
+                    if draft_res:
+                        saved_drafts[mid] = draft_res
+                        try:
+                            with open(DRAFTS_FILE, "w", encoding="utf-8") as f:
+                                json.dump(saved_drafts, f, indent=2)
+                        except Exception:
+                            pass
+
+                if draft_res and draft_res.get("draft"):
                     draft_text = draft_res.get("draft")
-                    cited_ids = draft_res.get("cited_ids", [])
+                    cited_ids = draft_res.get("cited_ids", []) or draft_res.get("cited", [])
                     draft_res = self.memory.apply_preferences(msg, draft_res, cap="R6")
                     cc_list = draft_res.get("cc", [])
                 else:
-                    draft_text = (
-                        f"Hi,\n\nThank you for reaching out regarding '{msg.subject}'. "
-                        "I am reviewing the context and will follow up shortly.\n\nBest,\nSam"
-                    )
-                    cited_ids = [mid]
+                    # Drafter could not ground a reply from inbox context.
+                    # Per spec: ungroundable messages go to Pane 2, NOT Pane 1.
+                    # Pane 1 is "what the system wants to do" — no draft = nothing to gate.
+                    continue
 
             # Apply dynamic preferences (e.g. standing CC rules)
             draft_payload = {"draft": draft_text, "cc": cc_list}
@@ -126,6 +215,7 @@ class DashboardGenerator:
                 "from": msg.from_addr,
                 "subject": msg.subject,
                 "timestamp": msg.timestamp,
+                "body": msg.body,
                 "proposed_action": "send_reply",
                 "recipient": msg.from_addr,
                 "cc": cc_list,
@@ -138,13 +228,19 @@ class DashboardGenerator:
 
         return pending_actions
 
-    def get_pane2_flagged_threats(self) -> List[Dict[str, Any]]:
+
+    # _generate_inquiry_draft removed.
+    # Rule: if the inbox contains no information to ground a reply, draft nothing.
+    # An agent that sends 'I will look into this' is an agent that should be fired.
+
+    def get_pane2_flagged_threats(self, ungroundable: Optional[List[Dict]] = None) -> List[Dict[str, Any]]:
         """
-        Pane 2: Flagged Items & Refused Hostile Injections.
-        Surfaces prompt injections, phishing, domain spoofing, and wire fraud.
-        Completely generic across any input dataset.
+        Pane 2: Refused actions.
+        Per spec: hostile messages + anything the system could not ground.
         """
         flagged = []
+
+        # Section A: Hostile/adversarial messages (prompt injection, phishing, spoofing)
         for msg in self.store.messages:
             report = self.scanner.scan_message(msg, cap="R6")
             if report.is_hostile:
@@ -157,8 +253,26 @@ class DashboardGenerator:
                     "attempted_action": report.attempted_action,
                     "risk_level": "CRITICAL",
                     "decision": "REFUSED - Left in place",
+                    "refusal_reason": "hostile_injection",
                     "enforcement": "Zero writes to outbox. Attacker instructions suppressed. Preserved for audit."
                 })
+
+        # Section B: Messages the system wanted to reply to but could not ground
+        # (reply disposition, non-hostile, but no grounding context found in inbox)
+        for item in (ungroundable or []):
+            flagged.append({
+                "message_id": item["message_id"],
+                "from": item["from"],
+                "subject": item["subject"],
+                "timestamp": item["timestamp"],
+                "threat_type": "ungroundable_reply",
+                "attempted_action": f"Proposed reply to {item['from']} re: '{item['subject']}'",
+                "risk_level": "INFO",
+                "decision": "REFUSED - Could not ground from inbox",
+                "refusal_reason": "no_grounding_context",
+                "enforcement": "System declined to draft. No message sent. Surfaced for human attention."
+            })
+
         return flagged
 
     def _parse_message_datetime(self, msg: Message) -> Optional[Tuple[datetime, str, str]]:
@@ -377,9 +491,74 @@ class DashboardGenerator:
         return commitments, conflicts
 
     def build_dashboard(self) -> Dict[str, Any]:
-        """Assembles full 3-pane dashboard data"""
+        """Assembles full 3-pane dashboard data.
+        Pane 1: grounded drafts gated for sign-off.
+        Pane 2: hostile + ungroundable (per spec: 'anything it could not ground').
+        Pane 3: commitments calendar.
+        """
         pane1 = self.get_pane1_pending_actions()
-        pane2 = self.get_pane2_flagged_threats()
+        pane1_ids = {item["message_id"] for item in pane1}
+
+        # Collect messages the system wanted to reply to but could NOT ground
+        # These go to Pane 2 per the assignment spec
+        from collections import Counter
+        to_counter = Counter(m.to_addr.lower() for m in self.store.messages if m.to_addr)
+        owner_addr = to_counter.most_common(1)[0][0] if to_counter else ""
+        AUTO_PREFIXES = (
+            "no-reply", "noreply", "do-not-reply", "donotreply",
+            "ship-confirm", "ship-notification", "order-confirm",
+            "calendar-notification", "alerts", "alert",
+            "info", "feedback", "status", "notes",
+            "checkin", "appointments", "success", "mailer",
+            "notifications", "billing", "no-reply-aws",
+            "hr", "facilities", "it-support", "helpdesk",
+            "noreply-aws", "support", "admin", "security", "hello"
+        )
+        decisions_map = {}
+        if self.decisions_file.exists():
+            try:
+                with open(self.decisions_file, "r", encoding="utf-8") as f:
+                    decisions_map = {d["message_id"]: d for d in json.load(f)}
+            except Exception:
+                pass
+
+        ungroundable = []
+        for mid, d in decisions_map.items():
+            if d.get("disposition") != "reply" or mid in pane1_ids:
+                continue
+            msg = self.store.get_message(mid, log_read=False)
+            if not msg:
+                continue
+            local = msg.from_addr.split("@")[0].lower()
+            if any(local.startswith(p) or local == p for p in AUTO_PREFIXES):
+                continue
+            if msg.from_addr.lower() == owner_addr:
+                continue
+            sec = self.scanner.scan_message(msg)
+            if sec.is_hostile:
+                continue  # Already in hostile section
+
+            # Verify it is a genuine inquiry/request, not an informational update
+            text = (msg.subject + " " + msg.body).lower()
+            has_q = "?" in msg.body
+            has_req = any(r in text for r in [
+                "could you", "can you", "please send", "please share",
+                "let me know", "let us know", "what is", "what are", "where is",
+                "does that work", "are you free", "can we", "resend",
+                "do you have", "would you", "reply to confirm", "need a yes", "please confirm",
+                "for signature", "sign via", "signature needed"
+            ])
+            if not has_q and not has_req:
+                continue
+
+            ungroundable.append({
+                "message_id": msg.id,
+                "from": msg.from_addr,
+                "subject": msg.subject,
+                "timestamp": msg.timestamp,
+            })
+
+        pane2 = self.get_pane2_flagged_threats(ungroundable=ungroundable)
         pane3_comm, pane3_conflicts = self.get_pane3_commitments()
 
         summary = {
@@ -399,6 +578,7 @@ class DashboardGenerator:
             "pane3_commitments": pane3_comm,
             "conflicts": pane3_conflicts
         }
+        self._last_data = summary
         return summary
 
     def generate_json(self, output_file: Path = DASHBOARD_JSON_FILE) -> Dict[str, Any]:
@@ -408,15 +588,39 @@ class DashboardGenerator:
             json.dump(data, f, indent=2)
         return data
 
-    def generate_html(self, output_file: Path = DASHBOARD_FILE) -> str:
-        """Generates executive-grade responsive 3-pane HTML dashboard"""
-        data = self.build_dashboard()
+    def generate_html(self, output_file: Path = DASHBOARD_FILE, data: Optional[Dict] = None) -> str:
+        """Generates executive-grade responsive 3-pane HTML dashboard.
+        Accepts pre-computed data dict to avoid a second LLM pass.
+        If data is None, reuses self._last_data if available, otherwise calls build_dashboard().
+        """
+        if data is None:
+            data = self._last_data or self.build_dashboard()
 
         # HTML formatting helpers
         pane1_items_html = ""
         for item in data["pane1_pending_actions"]:
             cites = "".join([f'<span class="badge cite">Source: {cid}</span>' for cid in item.get("cited_ids", [])])
             cc_badge = f'<span class="badge cc">CC: {", ".join(item.get("cc", []))}</span>' if item.get("cc") else ""
+            has_draft = bool(item.get("draft_body"))
+
+            if has_draft:
+                draft_section = f'''
+                <div class="draft-box">
+                    <div class="draft-label">&#x2728; Proposed Grounded Draft Reply:</div>
+                    <div class="draft-text">{item["draft_body"]}</div>
+                </div>
+                <div class="citations-row">
+                    <span class="cite-label">Grounded Citations:</span>
+                    {cites if cites else '<span class="badge note">Direct Context</span>'}
+                </div>'''
+            else:
+                body_preview = (item.get("body") or "").replace("<", "&lt;").replace(">", "&gt;")
+                draft_section = f'''
+                <div class="draft-box" style="background:rgba(251,191,36,0.08);border-left:3px solid #f59e0b;">
+                    <div class="draft-label" style="color:#f59e0b;">&#x270D; No grounded draft — reply needed from you:</div>
+                    <div class="draft-text" style="color:#94a3b8;white-space:pre-wrap;font-size:0.82rem;">{body_preview[:400]}{"..." if len(body_preview) > 400 else ""}</div>
+                </div>'''
+
             pane1_items_html += f"""
             <div class="card pending-card">
                 <div class="card-header">
@@ -425,27 +629,46 @@ class DashboardGenerator:
                 </div>
                 <div class="meta-row">
                     <span><strong>From:</strong> {item['from']}</span>
-                    <span><strong>Action:</strong> {item['proposed_action']}</span>
+                    <span><strong>Proposed Action:</strong> {item['proposed_action']}</span>
+                    <span><strong>Why Human Needed:</strong> Irreversible send holding credentials/facts; gated under Part 4 boundary.</span>
                 </div>
                 {f'<div class="meta-row">{cc_badge}</div>' if cc_badge else ''}
-                <div class="draft-box">
-                    <div class="draft-label">Proposed Grounded Draft Reply:</div>
-                    <div class="draft-text">{item['draft_body']}</div>
-                </div>
-                <div class="citations-row">
-                    <span class="cite-label">Grounded Citations:</span>
-                    {cites if cites else '<span class="badge note">Direct Context</span>'}
-                </div>
+                {draft_section}
                 <div class="action-footer">
-                    <button class="btn btn-approve" onclick="alert('Simulation: Approved dispatch for {item['message_id']} via Gate.')">✓ Approve & Send</button>
-                    <button class="btn btn-reject" onclick="alert('Simulation: Draft rejected for {item['message_id']}.')">✕ Modify / Reject</button>
+                    <button class="btn btn-approve" onclick="alert('Simulation: Approved dispatch for {item['message_id']} via Gate.')">&#x2713; Approve &amp; Send</button>
+                    <button class="btn btn-reject" onclick="alert('Simulation: Draft rejected for {item['message_id']}.')">&#x2715; Modify / Reject</button>
                 </div>
             </div>
             """
 
         pane2_items_html = ""
         for item in data["pane2_flagged_items"]:
-            pane2_items_html += f"""
+            is_ungroundable = item.get("refusal_reason") == "no_grounding_context" or item.get("threat_type") == "ungroundable_reply"
+            if is_ungroundable:
+                pane2_items_html += f"""
+            <div class="card" style="border-left: 4px solid var(--accent-amber); background: rgba(30, 41, 59, 0.45);">
+                <div class="card-header">
+                    <div class="card-title">[{item['message_id']}] UNGROUNDABLE INQUIRY</div>
+                    <span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4);">REFUSED TO HALLUCINATE</span>
+                </div>
+                <div class="meta-row">
+                    <span><strong>From:</strong> {item['from']}</span>
+                    <span><strong>Subject:</strong> {item['subject']}</span>
+                </div>
+                <div class="threat-box" style="background: rgba(45, 35, 15, 0.5); border: 1px solid rgba(245, 158, 11, 0.3);">
+                    <div class="threat-label" style="color: #fbbf24;">What Was Attempted:</div>
+                    <div class="threat-desc" style="color: #fef3c7;">{item['attempted_action']}</div>
+                </div>
+                <div class="defense-status">
+                    <div class="shield-icon">ℹ️</div>
+                    <div class="defense-text" style="color: #e2e8f0;">
+                        <strong>What System Did Instead:</strong> Refused to draft: required facts not present in inbox. Held for human attention rather than inventing details.
+                    </div>
+                </div>
+            </div>
+            """
+            else:
+                pane2_items_html += f"""
             <div class="card flagged-card">
                 <div class="card-header">
                     <div class="card-title">[{item['message_id']}] {item['threat_type'].upper()}</div>
@@ -456,13 +679,13 @@ class DashboardGenerator:
                     <span><strong>Subject:</strong> {item['subject']}</span>
                 </div>
                 <div class="threat-box">
-                    <div class="threat-label">Attempted Hostile Action:</div>
+                    <div class="threat-label">What Was Attempted:</div>
                     <div class="threat-desc">{item['attempted_action']}</div>
                 </div>
                 <div class="defense-status">
                     <div class="shield-icon">🛡️</div>
                     <div class="defense-text">
-                        <strong>Safety Guarantee:</strong> Zero writes to outbox. Message preserved in place for forensic audit.
+                        <strong>What System Did Instead:</strong> Refused hostile instruction, zero outbox writes. Message preserved in place for forensic audit.
                     </div>
                 </div>
             </div>
@@ -830,7 +1053,7 @@ class DashboardGenerator:
             </div>
             <div class="metric-pill">
                 <div class="metric-val" style="color: var(--accent-rose)">{data['metrics']['flagged_threats_count']}</div>
-                <div class="metric-label">Refused Threats</div>
+                <div class="metric-label">Flagged / Refused</div>
             </div>
             <div class="metric-pill">
                 <div class="metric-val" style="color: var(--accent-cyan)">{data['metrics']['commitments_count']}</div>
@@ -857,11 +1080,11 @@ class DashboardGenerator:
             {pane1_items_html}
         </section>
 
-        <!-- PANE 2: FLAGGED HOSTILE ITEMS -->
+        <!-- PANE 2: FLAGGED HOSTILE & UNGROUNDABLE ITEMS -->
         <section class="pane-col">
             <div class="pane-header">
                 <div class="pane-title" style="color: #fb7185">
-                    <span>🛡️</span> Pane 2: Flagged Hostile Attacks ({data['metrics']['flagged_threats_count']})
+                    <span>🛡️</span> Pane 2: Flagged & Refused Actions ({data['metrics']['flagged_threats_count']})
                 </div>
                 <span class="badge danger-badge">Refused & Preserved</span>
             </div>
