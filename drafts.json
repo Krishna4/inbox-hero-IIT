@@ -29,5 +29,14 @@
       "m036"
     ],
     "grounded": true
+  },
+  "m043": {
+    "message_id": "m043",
+    "recipient": "aria.f@northwind.vc",
+    "draft": "I would love to have the vision on Tuesday the 15th at 3:00 PM, as that works well for our partner meeting and I'm open to scheduling a 30-minute meeting. Please confirm the 3:00 PM slot, and I'll send the calendar hold then.",
+    "cited": [
+      "m010"
+    ],
+    "grounded": true
   }
 }
