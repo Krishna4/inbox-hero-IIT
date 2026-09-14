@@ -38,6 +38,7 @@ PREFS_FILE = BASE_DIR / "prefs.json"
 DECISIONS_FILE = BASE_DIR / "decisions.json"
 TRACE_FILE = BASE_DIR / "trace.jsonl"
 DASHBOARD_FILE = BASE_DIR / "dashboard.html"
+DASHBOARD_JSON_FILE = BASE_DIR / "dashboard.json"
 
 # Ensure output directories exist
 OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
