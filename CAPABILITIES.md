@@ -16,27 +16,31 @@
 ```mermaid
 flowchart TD
     A[Raw Inbox: 100 Messages] --> B[Security Scanner: R5]
-    B -- Hostile Injections & Phishing --> C[Refusal Log & Preserved in Place]
-    B -- Clean Email Data --> D[Rule Engine: Zero-Token Triage]
+    B -->|Hostile Injections & Phishing| C[Refusal Log & Preserved in Place]
+    B -->|Clean Email Data| D[Rule Engine: Zero-Token Triage]
     
-    D -- Deterministic Receipts/Notifications --> E[Auto-Archive / Digest: 33 Msgs]
-    D -- Human / Ambient Needs Analysis --> F[Qwen2.5:1.5b via Ollama: Batched Triage]
+    D -->|Deterministic Receipts/Notifications| E[Auto-Archive / Digest: 33 Msgs]
+    D -->|Human / Ambient Needs Analysis| F[Qwen2.5:1.5b via Ollama: Batched Triage]
     
     F --> G{Disposition}
-    G -- Reply --> H[Grounded Drafter: R2]
-    G -- Archive / Defer / Escalate --> I[Decisions Log]
+    G -->|Reply| H[Grounded Drafter: R2]
+    G -->|Archive / Defer / Escalate| I[Decisions Log]
     
     H --> J[Thread-Walk & Cross-Thread Retrieval]
-    J -- Context Found & Verified --> K[Grounded Draft with Citations]
-    J -- Missing Context --> L[Cite-or-Silence: Silence & Surface in Pane 2]
+    J -->|Context Found & Verified| K[Grounded Draft with Citations]
+    J -->|Missing Context| L[Cite-or-Silence: Silence & Surface in Pane 2]
     
     K --> M[Standing Instructions / Prefs: R4]
     M --> N[Safety Gate: R3]
     
-    N -- --dry-run Mode --> O[0 Outbox Writes - Intercept Logged]
-    N -- Live Mode + Human 'y' --> P[Atomic Outbox File Written]
+    N -->|Dry-run Mode| O[0 Outbox Writes - Intercept Logged]
+    N -->|Live Mode + Human Approval| P[Atomic Outbox File Written]
     
-    E & I & K & L & C --> Q[Three-Pane Dashboard: R6]
+    E --> Q[Three-Pane Dashboard: R6]
+    I --> Q
+    K --> Q
+    L --> Q
+    C --> Q
     Q --> R[Pane 1: Pending Gated Actions]
     Q --> S[Pane 2: Hostile Threats & Ungroundable Inquiries]
     Q --> T[Pane 3: Commitments & Schedule Collisions]
